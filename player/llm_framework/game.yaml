@@ -1,0 +1,102 @@
+background: |
+  You are in a survival challenge.
+  Each round, every player chooses an integer between 1 and 100.
+  Closest to 0.8 * average wins. Others lose 1 HP.
+
+state:
+  schema:
+    - name: round
+      type: int
+      description: Current round number
+    - name: hp
+      type: list[int]
+      description: Players' HP
+    - name: player_choices
+      type: list[int]
+      description: Number list chosen by all players this round
+    - name: target
+      type: float
+      description: target value, that is average*0.8
+
+  parser:
+    type: llm
+    model: "xiaoai:gpt-4o-mini"
+    retries: 3
+
+action:
+  schema:
+    - name: res
+      type: str
+      description: response
+  parser:
+    type: text
+
+
+prompts:
+  cot: |
+    Let's think step by step, and finally answer a number you think you can win.
+  tot: |
+    Let's consider this question from multiple angles.  First, come up with **3 different reasoning strategies** or thought processes that could help decide the answer. Each strategy should be a sequence of logical steps. Then, for each strategy, consider **2 possible numbers** you might choose based on that reasoning. After listing all the options, **evaluate which strategy and number is most promising**, based on logic and likelihood of winning. Finally, select the number you believe gives you the best chance to win.
+
+
+#  state:
+#   schema:
+#     - name: round
+#       type: int
+#       description: Current round number
+#     - name: hp
+#       type: list[int]
+#       description: Players' HP
+#     - name: target
+#       type: float
+#       description: Target value
+#   parser:
+#     type: llm
+#     model: "gpt-4o-mini"
+#     retries: 3
+
+# action:
+#   schema:
+#     - name: choice
+#       type: int
+#       description: Chosen number
+#     - name: confirm
+#       type: bool
+#       description: Whether agent confirms its action
+#   parser:
+#     type: regex
+#     pattern: "I choose (\\d+).*confirm=(true|false)"
+
+# # 另一种 action 配置示例（可切换用）
+#   # JSON 模式
+#     schema:
+#       - name: move
+#         type: str
+#         description: Direction to move
+#       - name: steps
+#         type: int
+#         description: Steps to take
+#     parser:
+#       type: json
+
+#   # split 模式
+#     schema:
+#       - name: item
+#         type: str
+#         description: Item to pick
+#       - name: quantity
+#         type: int
+#         description: Number of items
+#     parser:
+#       type: split
+#       sep: ","
+
+#   # text 模式
+#   text_mode:
+#     schema:
+#       - name: speaking
+#         type: str
+#         description: Agent's direct response
+#     parser:
+#       type: text
+
