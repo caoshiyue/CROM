@@ -238,7 +238,43 @@ class LLMApiService:
         completion = await client.chat.completions.create(**request_kwargs)
 
         return await self._process_response(provider, completion, is_stream)
+
+    @retry(max_retries=3, delay=2)
+    async def tool(self, model: str, messages: List[Dict[str, str]], **kwargs) -> str:
+        """Main method to get a chat completion. (REFACTORED)"""
+        # --- NEW: Parse provider, model_name, and mode ---
+        try:
+            model_and_mode = model.split("@", 1)
+            full_model_name = model_and_mode[0]
+            mode = model_and_mode[1].upper() if len(model_and_mode) > 1 else "default"
+
+            provider, model_name = full_model_name.split(":", 1)
+        except ValueError:
+            provider = "default"
+            model_name = model
+            mode = "default"
+        # --- End of new parsing logic ---
+
+        client = self._get_client(provider)
+
+        request_kwargs = {"model": model_name, "input": messages, **kwargs}
         
+        # --- NEW: Dynamic lookup for preprocessor based on mode ---
+        provider_logic = PROVIDER_LOGIC.get(provider, {})
+        modes_config = provider_logic.get("modes", {})
+        # Fallback to default mode if the specified mode doesn't exist
+        mode_logic = modes_config.get(mode, modes_config.get("default", {}))
+        
+        preprocessor = mode_logic.get("request_preprocessor")
+        if preprocessor:
+            request_kwargs = preprocessor(request_kwargs)
+        # --- End of dynamic lookup ---
+        
+        is_stream = request_kwargs.get('stream', False)
+        completion = await client.responses.create(**request_kwargs)
+
+        return  completion #await self._process_response(provider, completion, is_stream) #TODO 这里应该给tool写一个后处理
+    
     # get_embedding method remains the same
     @retry(max_retries=3, delay=1)
     async def get_embedding(self, model: str, input: List[str], **kwargs) -> Any:
@@ -264,6 +300,14 @@ async def openai_response(model: str, **kwargs) -> str:
     if 'messages' not in kwargs:
         raise ValueError("The 'messages' argument is required.")
     return await llm_service.chat(model=model, **kwargs)
+
+@async_adapter
+async def openai_tool(model: str, **kwargs) -> str:
+    """Public-facing interface for chat completions."""
+    if 'messages' not in kwargs:
+        raise ValueError("The 'messages' argument is required.")
+    return await llm_service.tool(model=model, **kwargs)
+
 
 @async_adapter
 async def get_embedding(model: str, input: List[str], **kwargs) -> any:

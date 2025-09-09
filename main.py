@@ -9,7 +9,7 @@ import random
 import math
 # Fill in your config information to conduct experiments.
 
-ENGINE = "xiaoai:gpt-4o-mini"  #"gpt-4o-mini", "gpt-4o" "gpt-4o-mini-2024-07-18" "deepseek-v3" "deepseek-r1"
+ENGINE = "xiaoai:gpt-4o-mini"  #"gpt-4o-mini", "gpt-4o" "deepseek-v3" "deepseek-r1" "gpt-5-nano"
 
 def poisson_prob(k, lam=1.3):
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
@@ -21,7 +21,7 @@ def build_player(strategy, name, persona, mean=50, std=25, player_names = [],pre
     if strategy=="agent":
         return GameAgent("llm", {"model": ENGINE},None,name=name,persona=persona,engine=ENGINE,prev_biddings=prev_biddings,)
     elif strategy=="cot":
-        return CoTAgentPlayer(name, persona, ENGINE, prev_biddings)
+        return GameAgent("cot", {"model": ENGINE},None,name=name,persona=persona,engine=ENGINE,prev_biddings=prev_biddings,)
     elif strategy=="persona":
         return PersonaAgentPlayer(name, persona, ENGINE, prev_biddings)
     elif strategy=="reflect":
@@ -43,9 +43,11 @@ def build_player(strategy, name, persona, mean=50, std=25, player_names = [],pre
     elif strategy=="mistralai" :
         return AgentPlayer(name,persona,"mistralai/mixtral-8x7b-instruct",prev_biddings)
     elif strategy == "tot":
-        return ToTAgentPlayer(name, persona, ENGINE, prev_biddings)
+        return GameAgent("tot", {"model": ENGINE},None,name=name,persona=persona,engine=ENGINE,prev_biddings=prev_biddings,)
     elif strategy == "crom":
         return CROMAgent(name, persona, "openai/gpt-4o-mini", prev_biddings)
+    elif strategy == "rule":
+        return GameAgent("rule", {"model": ENGINE},None,name=name,persona=persona,engine=ENGINE,prev_biddings=prev_biddings,)
     elif strategy=="mix" :
         mix_strategies = ["cot", "tot", "kr", "reflect", "agent"]
         selected = random.choice(mix_strategies)
@@ -89,7 +91,7 @@ def main(args, exp_no, prev_biddings=None):
     # Modify PlayerA's settings for ablation experiments.
     if args.player_engine: A.engine = args.player_engine
     if args.player_k:  A.k_level = args.player_k
-    A.engine="xiaoai:gpt-4o-mini"
+    A.engine= ENGINE
     players.append(A)
 
     # build opponent
@@ -134,8 +136,8 @@ if __name__=="__main__":
     import argparse
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--player_strategy', type=str, default="agent", choices=["agent","cot","pcot","kr","reflect", "persona", "refine", "spp","mk","rk","rk2","rk3","mem","o1","llama","tot","crom", "mistralai"])
-    parser.add_argument('--computer_strategy', type=str, default="agent",choices=["agent", "fix", "last", "mono", "monorand","cot","pcot","kr","reflect", "persona", "refine", "spp","mk","rk","rk2","rk3","mix","mem","mix2","mix_fix","llama","tot","crom"])
+    parser.add_argument('--player_strategy', type=str, default="rule", choices=["agent","cot","pcot","kr","reflect", "persona", "refine", "spp","mk","rk","rk2","rk3","mem","o1","llama","tot","crom", "mistralai","rule"])
+    parser.add_argument('--computer_strategy', type=str, default="rule",choices=["agent", "fix", "last", "mono", "monorand","cot","pcot","kr","reflect", "persona", "refine", "spp","mk","rk","rk2","rk3","mix","mem","mix2","mix_fix","llama","tot","crom"])
     parser.add_argument("--output_dir", type=str, default="result")
     parser.add_argument("--init_mean", type=int, default=40, help="init mean value for computer player")
     parser.add_argument("--norm_std", type=int, default=5, help="standard deviation of the random distribution of computer gamers")

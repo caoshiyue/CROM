@@ -2,7 +2,7 @@
 # Author:  
 # Description:  
 # LastEditors: Shiyuec
-# LastEditTime: 2025-09-03 11:01:50
+# LastEditTime: 2025-09-09 06:57:12
 ## 
 import yaml
 import json
@@ -20,6 +20,7 @@ class ConfigLoader:
         with open(yaml_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
+        self.background = self.config.get("background", {})
         self.state_schema = self.config.get("state", {}).get("schema", [])
         self.state_parser_cfg = self.config.get("state", {}).get("parser", {})
         self.action_schema = self.config.get("action", {}).get("schema", [])
@@ -69,33 +70,38 @@ class ConfigLoader:
     async def _parse_state_via_llm(self, text: str, model: str, retries: int) -> Dict[str, Any]:
         """
         使用 LLM 解析环境文本为 JSON。
-
-        Example:
-        >>> raw_text = "Round 2. HP=[10,9,8], Choices=[23,45,67], Target=35.2"
-        >>> await _parse_state_via_llm(raw_text, "gpt-4o-mini", 2)
-        {
-            "round": 2,
-            "hp": [10,9,8],
-            "player_choices": [23,45,67],
-            "target": 35.2
-        }
         """
         schema_desc = "\n".join(
-            [f"- {f['name']} ({f['type']}): {f['description']}" for f in self.state_schema]
-        )
-        prompt = (
-            f"Extract the following fields as JSON from the text:\n{schema_desc}\n\n"
-            f"Text:\n{text}"
+            [f"- {f['name']}: {f['description']} Return in ({f['type']})." for f in self.state_schema]
         )
 
+        background = getattr(self, "background", "")
+        hint = self.state_parser_cfg.get("prompts", "")
+
+        prompt = (
+            f"You are an expert game state parser.\n"
+            f"Background:\n{background}\n\n"
+            f"Your task: extract the following fields as JSON from the text.\n"
+            f"{schema_desc}\n\n"
+        )
+
+        prompt += f"Text:\n{text}"
+        if hint:
+            prompt += f"Notice: {hint}\n\n"
+
         for attempt in range(retries):
-            resp = await openai_response(model=model, messages=[{"role": "user", "content": prompt}],temperature=0.2,)
+            resp = await openai_response(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
             try:
-                parsed = extract_json(resp, first=True)
+                parsed = extract_json(resp, first=False)
                 return self._coerce_types(parsed, self.state_schema)
             except Exception:
                 if attempt == retries - 1:
                     raise
+
 
 
     def parse_action(self, text: str) -> Dict[str, Any]:
@@ -125,7 +131,7 @@ class ConfigLoader:
             return self._values_to_action_dict([value])
 
         elif parser_type == "json":
-            parsed = extract_json(text, first=True)
+            parsed = extract_json(text, first=False)
             return self._coerce_types(parsed, self.action_schema)
 
         elif parser_type == "split":
@@ -186,6 +192,9 @@ class ConfigLoader:
         >>> _coerce_by_type(["1","2"], "list[int]")
         [1,2]
         """
+        if value is None:
+            return None
+
         if typ == "int":
             return int(value)
         elif typ == "float":
@@ -196,6 +205,8 @@ class ConfigLoader:
             return bool(value)
         elif typ.startswith("list["):
             subtype = typ[5:-1]
+            if value is None:
+                return None
             return [self._coerce_by_type(v, subtype) for v in value]
         else:
             return value

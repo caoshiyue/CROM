@@ -2,17 +2,11 @@
 # Author:  
 # Description:  
 # LastEditors: Shiyuec
-# LastEditTime: 2025-09-03 11:13:35
+# LastEditTime: 2025-09-09 02:04:53
 ##
 import os 
 from .llm_framework import *
 from .reasoning_player import AgentPlayer
-
-AGENT_REGISTRY = {
-    "llm": LLMOnly,
-    "rule": RuleBasedAgent,
-
-}
 
 # Description 对接部分，按照环境要求修改
 class GameAgent(AgentPlayer):

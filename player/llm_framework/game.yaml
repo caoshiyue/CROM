@@ -10,18 +10,21 @@ state:
       description: Current round number
     - name: hp
       type: list[int]
-      description: Players' HP
+      description: Players' HP, List in the order of players
     - name: player_choices
       type: list[int]
-      description: Number list chosen by all players this round
+      description: The number chosen by each player **last** round, List in the order of players
     - name: target
       type: float
-      description: target value, that is average*0.8
+      description: target value in **last** round, that is average*0.8
 
   parser:
     type: llm
-    model: "xiaoai:gpt-4o-mini"
-    retries: 3
+    model: "xiaoai:gpt-5-nano"
+    prompts: "You should first output the analysis of the game record step by step, and then  **extract the most current (latest) game state** output as JSON.  | 
+      If a field's value cannot be found from the game record, return `null` for that field in the JSON output."
+    retries: 2
+
 
 action:
   schema:
@@ -32,9 +35,10 @@ action:
     type: text
 
 
+
 prompts:
   cot: |
-    Let's think step by step, and finally answer a number you think you can win.
+    Guess which number will win in the next round. Let's think step by step, and finally answer a number you think you can win.
   tot: |
     Let's consider this question from multiple angles.  First, come up with **3 different reasoning strategies** or thought processes that could help decide the answer. Each strategy should be a sequence of logical steps. Then, for each strategy, consider **2 possible numbers** you might choose based on that reasoning. After listing all the options, **evaluate which strategy and number is most promising**, based on logic and likelihood of winning. Finally, select the number you believe gives you the best chance to win.
 

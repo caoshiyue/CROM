@@ -77,7 +77,7 @@ class AgentPlayer(Player): #! 这一套框架倒是能用
         while status != 1:
             try:
                 response = await openai_response(
-                    model="xiaoai:gpt-4o-mini", #! 注意，o1 无法处理解析数字
+                    model="xiaoai:gpt-5-nano", #! 注意，o1 无法处理解析数字
                     messages = [{"role":"system", "content":"By reading the conversation, extract the number chosen by player. Output format: number"}, {"role": "user", "content": message}],
                     temperature=0.7,
                     max_tokens=1600,
