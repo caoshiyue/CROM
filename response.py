@@ -57,7 +57,7 @@ async def default_response_parser(response, is_stream: bool) -> str:
     if is_stream:
         raise Exception("流式没实现")
     else:
-        message = response.content[0].text
+        message = response.output[-1].content[0].text
 
     return message
 
@@ -267,7 +267,7 @@ class LLMApiService:
             parser = PROVIDER_LOGIC.get(provider, {}).get("response_parser", default_chat_parser)
             return await parser(completion, is_stream)
         elif request_type == "response":
-            parser = PROVIDER_LOGIC.get(provider, {}).get("response_parser", default_response_parser)
+            parser = default_response_parser
             return await parser(completion, is_stream)
 
         
@@ -282,7 +282,7 @@ class LLMApiService:
                 messages=request_kwargs["messages"]
             elif "input"  in request_kwargs:
                 request_type = "response"
-                response_content = completion.content[0].text
+                response_content = completion.output[-1].content[0].text
                 messages=request_kwargs["input"]
             try:
                 
@@ -290,8 +290,8 @@ class LLMApiService:
                 token_info = {}
                 if hasattr(completion, 'usage'):
                     token_info = {
-                        "prompt_tokens": completion.usage.prompt_tokens,
-                        "completion_tokens": completion.usage.completion_tokens,
+                        "prompt_tokens": getattr(completion.usage, "prompt_tokens", None) or getattr(completion.usage, "input_tokens", None),
+                        "completion_tokens":  getattr(completion.usage, "completion_tokens", None) or getattr(completion.usage, "output_tokens", None),
                         "total_tokens": completion.usage.total_tokens
                     }
 
