@@ -4,16 +4,18 @@ import functools
 import random
 from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass
-
+import json
 # Assume api_key.py contains API_CONFIGS dictionary
 from api_key import API_CONFIGS
-
+import time
+LOG_FILE = "openai_log.json"
 
 # --- 0. 请求/响应预处理 & 解析器函数 ---
 # (These functions remain the same as in your original code)
 
 def _preprocess_openai_o_series(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Preprocessor for o1, o3, o4 models."""
+
     kwargs['messages'] = [
         {**msg, 'role': 'user'} if msg.get('role') == 'system' else msg
         for msg in kwargs.get('messages', [])
@@ -30,7 +32,7 @@ def _preprocess_thinking_stream(kwargs: Dict[str, Any], thinking_params: Dict[st
     kwargs['extra_body'].update(thinking_params)
     return kwargs
 
-async def default_response_parser(completion, is_stream: bool) -> str:
+async def default_chat_parser(completion, is_stream: bool) -> str:
     """通用解析器：支持流式和非流式"""
     thinking_content, answer_content = "", ""
     if is_stream:
@@ -50,7 +52,16 @@ async def default_response_parser(completion, is_stream: bool) -> str:
         return f"<Thinking>{thinking_content}</Thinking>\n{answer_content}"
     return answer_content
 
-async def deepseek_response_parser(completion, is_stream: bool) -> str:
+async def default_response_parser(response, is_stream: bool) -> str:
+    """通用解析器：支持流式和非流式"""
+    if is_stream:
+        raise Exception("流式没实现")
+    else:
+        message = response.content[0].text
+
+    return message
+
+async def deepseek_chat_parser(completion, is_stream: bool) -> str:
     """DeepSeek 专用解析器 (assuming non-streaming for simplicity here)"""
     message = completion.choices[0].message
     answer_content = message.content or ""
@@ -70,19 +81,19 @@ PROVIDER_LOGIC = {
         "modes": {
             "default": {"request_preprocessor": None}
         },
-        "response_parser": default_response_parser
+        "response_parser": default_chat_parser
     },
     "o1": {
         "modes": {
             "default": {"request_preprocessor": _preprocess_openai_o_series}
         },
-        "response_parser": default_response_parser
+        "response_parser": default_chat_parser
     },
     "o3": {
         "modes": {
             "default": {"request_preprocessor": _preprocess_openai_o_series}
         },
-        "response_parser": default_response_parser
+        "response_parser": default_chat_parser
     },
     "ali": {
         "modes": {
@@ -96,7 +107,7 @@ PROVIDER_LOGIC = {
                 "request_preprocessor":  lambda kwargs: {**kwargs, "extra_body":{"enable_thinking": False}}
             }
         },
-        "response_parser": default_response_parser
+        "response_parser": default_chat_parser
     },
     "claude": {
         "modes": {
@@ -110,17 +121,17 @@ PROVIDER_LOGIC = {
                 "request_preprocessor": None
             }
         },
-        "response_parser": default_response_parser
+        "response_parser": default_chat_parser
     },
     "ds": {
         "modes": {"default": {"request_preprocessor": None}},
-        "response_parser": deepseek_response_parser
+        "response_parser": deepseek_chat_parser
     },
     "minimax": {
         "modes": {
             "default": {"request_preprocessor": lambda kwargs: {**kwargs, "stream": True}}
         },
-        "response_parser": default_response_parser
+        "response_parser": default_chat_parser
     }
 }
 
@@ -198,15 +209,9 @@ class LLMApiService:
                 raise ValueError(f"Provider '{provider}' or default provider not configured or has no valid API keys.")
         return random.choice(client_list)
 
-    async def _process_response(self, provider: str, completion: Any, is_stream: bool) -> str:
-        """根据 provider 调用对应的解析逻辑"""
-        parser = PROVIDER_LOGIC.get(provider, {}).get("response_parser", default_response_parser)
-        return await parser(completion, is_stream)
-
-    @retry(max_retries=3, delay=2)
-    async def chat(self, model: str, messages: List[Dict[str, str]], **kwargs) -> str:
-        """Main method to get a chat completion. (REFACTORED)"""
-        # --- NEW: Parse provider, model_name, and mode ---
+    # 预处理逻辑
+    def _parse_and_prepare_request(self, model: str, **kwargs) -> tuple[str, str, str, dict]:
+        """Parses model string and applies pre-processors."""
         try:
             model_and_mode = model.split("@", 1)
             full_model_name = model_and_mode[0]
@@ -217,64 +222,111 @@ class LLMApiService:
             provider = "default"
             model_name = model
             mode = "default"
-        # --- End of new parsing logic ---
 
-        client = self._get_client(provider)
-
-        request_kwargs = {"model": model_name, "messages": messages, **kwargs}
-        
-        # --- NEW: Dynamic lookup for preprocessor based on mode ---
+        # Dynamic lookup for preprocessor based on mode
         provider_logic = PROVIDER_LOGIC.get(provider, {})
         modes_config = provider_logic.get("modes", {})
-        # Fallback to default mode if the specified mode doesn't exist
         mode_logic = modes_config.get(mode, modes_config.get("default", {}))
         
         preprocessor = mode_logic.get("request_preprocessor")
+        request_kwargs = {"model": model_name, **kwargs}
         if preprocessor:
             request_kwargs = preprocessor(request_kwargs)
-        # --- End of dynamic lookup ---
-        
-        is_stream = request_kwargs.get('stream', False)
-        completion = await client.chat.completions.create(**request_kwargs)
-
-        return await self._process_response(provider, completion, is_stream)
-
-    @retry(max_retries=3, delay=2)
-    async def tool(self, model: str, messages: List[Dict[str, str]], **kwargs) -> str:
-        """Main method to get a chat completion. (REFACTORED)"""
-        # --- NEW: Parse provider, model_name, and mode ---
-        try:
-            model_and_mode = model.split("@", 1)
-            full_model_name = model_and_mode[0]
-            mode = model_and_mode[1].upper() if len(model_and_mode) > 1 else "default"
-
-            provider, model_name = full_model_name.split(":", 1)
-        except ValueError:
-            provider = "default"
-            model_name = model
-            mode = "default"
-        # --- End of new parsing logic ---
-
-        client = self._get_client(provider)
-
-        request_kwargs = {"model": model_name, "input": messages, **kwargs}
-        
-        # --- NEW: Dynamic lookup for preprocessor based on mode ---
-        provider_logic = PROVIDER_LOGIC.get(provider, {})
-        modes_config = provider_logic.get("modes", {})
-        # Fallback to default mode if the specified mode doesn't exist
-        mode_logic = modes_config.get(mode, modes_config.get("default", {}))
-        
-        preprocessor = mode_logic.get("request_preprocessor")
-        if preprocessor:
-            request_kwargs = preprocessor(request_kwargs)
-        # --- End of dynamic lookup ---
-        
-        is_stream = request_kwargs.get('stream', False)
-        completion = await client.responses.create(**request_kwargs)
-
-        return  completion #await self._process_response(provider, completion, is_stream) #TODO 这里应该给tool写一个后处理
+            # 根据 kwargs 判断 request_type
+        if "input" in kwargs:
+            request_type = "response"
+        elif "messages" in kwargs:
+            request_type = "completion"
+        else:
+            request_type = "completion"
+        return provider, model_name, mode, request_kwargs, request_type
     
+    # API请求
+    @retry(max_retries=3, delay=2)
+    async def _perform_api_call(self, client, method: str, **request_kwargs):
+        """
+        Handles the API call and logs it.
+        The method parameter determines which client method to call.
+        """
+        if method == 'completion':
+            completion = await client.chat.completions.create(**request_kwargs)
+        elif method == 'response':
+            completion = await client.responses.create(**request_kwargs)
+        elif method == 'parse':
+            completion = await client.responses.parse(**request_kwargs)
+        else:
+            raise ValueError("Invalid API method specified.")
+        
+        return completion
+
+    # 后处理逻辑
+    async def _process_response(self, provider: str, completion: Any, is_stream: bool, request_type: str) -> str:
+        """根据 provider 调用对应的解析逻辑"""
+        if request_type == "completion":
+
+            parser = PROVIDER_LOGIC.get(provider, {}).get("response_parser", default_chat_parser)
+            return await parser(completion, is_stream)
+        elif request_type == "response":
+            parser = PROVIDER_LOGIC.get(provider, {}).get("response_parser", default_response_parser)
+            return await parser(completion, is_stream)
+
+        
+    # DEBUG逻辑
+    def _handle_debug_log(self, model_name: str,  provider: str,  completion: Any, **request_kwargs):
+            """
+            一个私有方法，用于在 DEBUG 模式下处理并写入日志。
+            """
+            if "messages"in request_kwargs:
+                request_type = "completion"
+                response_content = completion.choices[0].message.content
+                messages=request_kwargs["messages"]
+            elif "input"  in request_kwargs:
+                request_type = "response"
+                response_content = completion.content[0].text
+                messages=request_kwargs["input"]
+            try:
+                
+                # 提取 token 信息
+                token_info = {}
+                if hasattr(completion, 'usage'):
+                    token_info = {
+                        "prompt_tokens": completion.usage.prompt_tokens,
+                        "completion_tokens": completion.usage.completion_tokens,
+                        "total_tokens": completion.usage.total_tokens
+                    }
+
+                # 提取响应内容
+
+                log_entry = {
+                    "model_name":model_name,
+                    "provider": provider,
+                    "input_messages": messages,
+                    "output_message": response_content,
+                    "tokens_used": token_info
+                }
+
+                # 将日志条目追加写入 JSON 文件
+                with open(LOG_FILE, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + ',\n')
+                
+            except Exception as e:
+                print(f"Error writing to log file: {e}")
+
+    async def text_generation(self, model: str, **kwargs) -> str:
+        """Main method to get a chat completion. (REFACTORED)"""
+        #预处理
+        provider, model_name, mode, request_kwargs, request_type = self._parse_and_prepare_request(model,  **kwargs) #   model_name,messages 已经吸收进request_kwargs
+        client = self._get_client(provider)
+        #API请求
+        completion = await self._perform_api_call(client, request_type , **request_kwargs)
+        if mode == "DEBUG":
+            self._handle_debug_log(model_name, provider,  completion,**request_kwargs)
+        #后处理
+        is_stream = request_kwargs.get('stream', False)
+        return await self._process_response(provider, completion, is_stream, request_type)
+
+
+
     # get_embedding method remains the same
     @retry(max_retries=3, delay=1)
     async def get_embedding(self, model: str, input: List[str], **kwargs) -> Any:
@@ -297,16 +349,14 @@ llm_service = LLMApiService()
 @async_adapter
 async def openai_response(model: str, **kwargs) -> str:
     """Public-facing interface for chat completions."""
-    if 'messages' not in kwargs:
-        raise ValueError("The 'messages' argument is required.")
-    return await llm_service.chat(model=model, **kwargs)
+
+    return await llm_service.text_generation(model=model, **kwargs)
 
 @async_adapter
-async def openai_tool(model: str, **kwargs) -> str:
+async def openai_parse(model: str, **kwargs) -> str:
     """Public-facing interface for chat completions."""
-    if 'messages' not in kwargs:
-        raise ValueError("The 'messages' argument is required.")
-    return await llm_service.tool(model=model, **kwargs)
+
+    return await llm_service.parse(model=model, **kwargs)
 
 
 @async_adapter
